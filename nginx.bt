@@ -1,9 +1,0 @@
-
-
-
-uprobe:/usr/local/nginx/sbin/nginx:ngx_close_connection 
-{
-	printf("ngx_close_connection\n");
-}
-
-

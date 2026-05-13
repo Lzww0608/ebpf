@@ -1,1 +1,0 @@
-savedcmd_/home/lab2439/lzww/cpp/BPF/module/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/lab2439/lzww/cpp/BPF/module/Module.symvers -T /home/lab2439/lzww/cpp/BPF/module/modules.order -i Module.symvers -e 

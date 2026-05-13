@@ -1,9 +1,0 @@
-
-
-
-uprobe:/home/lab2439/lzww/cpp/Ntyco/nty_server:nty_coroutine_create
-{
-    printf("Tracing NtyCo\n");
-	printf("name: %s, pid: %d\n", comm, pid);
-}
-
