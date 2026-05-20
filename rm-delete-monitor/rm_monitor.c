@@ -8,13 +8,24 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "rm_monitor_format.h"
 #include "rm_monitor.h"
 #include "rm_monitor.skel.h"
 
+#define PROC_CMDLINE_LEN 4096
+
 static volatile sig_atomic_t exiting = 0;
 static bool only_rm = true;
+static unsigned long long total_events;
+static unsigned long long success_events;
+static unsigned long long failure_events;
+static unsigned long long unlink_success_events;
+static unsigned long long unlink_failure_events;
+static unsigned long long rmdir_success_events;
+static unsigned long long rmdir_failure_events;
 
 static void sig_handler(int sig) {
+    (void)sig;
     exiting = 1;
 }
 
@@ -38,11 +49,127 @@ static const char *op_to_str(unsigned char op) {
     }
 }
 
+static const char *path_or_dash(const char *path) {
+    return path && path[0] ? path : "-";
+}
+
+static void append_truncation_marker(char *buf, size_t buf_len) {
+    size_t len = strlen(buf);
+
+    if (len + 5 < buf_len)
+        strcat(buf, " ...");
+}
+
+static unsigned int read_proc_cmdline(unsigned int pid, char *buf, size_t buf_len) {
+    char path[64];
+    FILE *file;
+    size_t nread;
+
+    if (!buf_len)
+        return 0;
+
+    buf[0] = '\0';
+    snprintf(path, sizeof(path), "/proc/%u/cmdline", pid);
+
+    file = fopen(path, "rb");
+    if (!file)
+        return 0;
+
+    nread = fread(buf, 1, buf_len - 1, file);
+    fclose(file);
+
+    if (!nread)
+        return 0;
+
+    buf[nread] = '\0';
+    return (unsigned int)nread;
+}
+
+static void update_stats(const struct event *e) {
+    bool success = e->ret == 0;
+
+    total_events++;
+    if (success)
+        success_events++;
+    else
+        failure_events++;
+
+    if (e->op == OP_RMDIR) {
+        if (success)
+            rmdir_success_events++;
+        else
+            rmdir_failure_events++;
+        return;
+    }
+
+    if (success)
+        unlink_success_events++;
+    else
+        unlink_failure_events++;
+}
+
+static void print_summary(void) {
+    fprintf(stderr,
+            "\nsummary: total=%llu success=%llu fail=%llu "
+            "unlink_ok=%llu unlink_fail=%llu rmdir_ok=%llu rmdir_fail=%llu\n",
+            total_events,
+            success_events,
+            failure_events,
+            unlink_success_events,
+            unlink_failure_events,
+            rmdir_success_events,
+            rmdir_failure_events);
+}
+
 static int handle_event(void *ctx, void *data, size_t data_sz) {
     const struct event *e = data;
+    char proc_cmdline[PROC_CMDLINE_LEN];
+    char cmdline[PROC_CMDLINE_LEN + 16];
+    const char *resolved_path;
+    const char *err_text = "-";
+    const char *cmdline_src;
+    unsigned int cmdline_len;
+    unsigned int proc_cmdline_len;
+    bool cmdline_truncated;
+    int err_no;
+
+    (void)ctx;
+
+    if (data_sz < sizeof(*e))
+        return 0;
 
     if (only_rm && strcmp(e->comm, "rm") != 0)
         return 0;
+
+    cmdline_src = e->cmdline;
+    cmdline_len = e->cmdline_len;
+    cmdline_truncated = (e->event_flags & EVENT_F_CMDLINE_TRUNCATED) != 0;
+
+    update_stats(e);
+    proc_cmdline_len = read_proc_cmdline(e->tgid,
+                                         proc_cmdline,
+                                         sizeof(proc_cmdline));
+    if (proc_cmdline_len > 0) {
+        cmdline_src = proc_cmdline;
+        cmdline_len = proc_cmdline_len;
+        cmdline_truncated = proc_cmdline_len == sizeof(proc_cmdline) - 1;
+    }
+
+    rm_monitor_format_cmdline(cmdline,
+                              sizeof(cmdline),
+                              cmdline_src,
+                              cmdline_len,
+                              e->comm);
+
+    if (cmdline_truncated)
+        append_truncation_marker(cmdline, sizeof(cmdline));
+
+    resolved_path = (e->event_flags & EVENT_F_PATH_RESOLVED) ?
+        path_or_dash(e->resolved_path) : "-";
+
+    err_no = rm_monitor_errno(e->ret);
+    if (err_no)
+        err_text = strerror(err_no);
 
     time_t now = time(NULL);
     struct tm tm;
@@ -51,14 +178,25 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
     localtime_r(&now, &tm);
     strftime(ts, sizeof(ts), "%F %T", &tm);
 
-    printf("%-19s  %-7u %-7u %-6u %-16s %-8s %s\n",
+    printf("%s pid=%u tid=%u uid=%u comm=%s op=%s result=%s ret=%ld errno=%d(%s) "
+           "dfd=%d flags=0x%x lsm=%s lsm_ret=%d path=\"%s\" resolved=\"%s\" cmdline=\"%s\"\n",
            ts,
            e->tgid,
            e->tid,
            e->uid,
            e->comm,
            op_to_str(e->op),
-           e->path);
+           rm_monitor_status(e->ret),
+           e->ret,
+           err_no,
+           err_text,
+           e->dfd,
+           e->flags,
+           (e->event_flags & EVENT_F_LSM_SEEN) ? "yes" : "no",
+           e->lsm_ret,
+           path_or_dash(e->path),
+           resolved_path,
+           cmdline);
 
     return 0;
 }
@@ -67,8 +205,8 @@ static void usage(const char *prog) {
     fprintf(stderr,
             "Usage: %s [--all]\n"
             "\n"
-            "  default : only show delete events from comm == \"rm\"\n"
-            "  --all   : show delete events from all processes\n",
+            "  default : only show delete attempts from comm == \"rm\"\n"
+            "  --all   : show delete attempts from all processes\n",
             prog);
 }
 
@@ -117,8 +255,7 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    printf("%-19s  %-7s %-7s %-6s %-16s %-8s %s\n",
-           "TIME", "TGID", "TID", "UID", "COMM", "OP", "PATH");
+    printf("Monitoring delete attempts. Press Ctrl-C to stop.\n");
 
     while (!exiting) {
         err = ring_buffer__poll(rb, 100);
@@ -134,6 +271,8 @@ int main(int argc, char **argv) {
     }
 
 cleanup:
+    if (total_events)
+        print_summary();
     ring_buffer__free(rb);
     rm_monitor_bpf__destroy(skel);
     return err < 0 ? -err : err;
