@@ -22,6 +22,31 @@ struct {
     __type(value, struct event);
 } inflight SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct event);
+} scratch_events SEC(".maps");
+
+static __always_inline void reset_event(struct event *e) {
+    e->ts_ns = 0;
+    e->tgid = 0;
+    e->tid = 0;
+    e->uid = 0;
+    e->event_flags = 0;
+    e->cmdline_len = 0;
+    e->dfd = 0;
+    e->flags = 0;
+    e->lsm_ret = 0;
+    e->ret = 0;
+    e->op = 0;
+    e->comm[0] = '\0';
+    e->path[0] = '\0';
+    e->resolved_path[0] = '\0';
+    e->cmdline[0] = '\0';
+}
+
 static __always_inline void read_current_cmdline(struct event *e) {
     struct task_struct *task = (struct task_struct *)bpf_get_current_task_btf();
     struct mm_struct *mm;
@@ -76,21 +101,28 @@ static __always_inline int trace_enter_delete(
     unsigned char op
 ) {
     unsigned long long key = bpf_get_current_pid_tgid();
+    __u32 zero = 0;
+    struct event *e;
 
-    struct event e = {};
-    e.ts_ns = bpf_ktime_get_ns();
-    e.tgid = key >> 32;
-    e.tid = (unsigned int)key;
-    e.uid = (unsigned int)bpf_get_current_uid_gid();
-    e.dfd = dfd;
-    e.flags = flags;
-    e.op = op;
+    e = bpf_map_lookup_elem(&scratch_events, &zero);
+    if (!e)
+        return 0;
 
-    bpf_get_current_comm(e.comm, sizeof(e.comm));
-    read_user_path(&e, pathname);
-    read_current_cmdline(&e);
+    reset_event(e);
 
-    bpf_map_update_elem(&inflight, &key, &e, BPF_ANY);
+    e->ts_ns = bpf_ktime_get_ns();
+    e->tgid = key >> 32;
+    e->tid = (unsigned int)key;
+    e->uid = (unsigned int)bpf_get_current_uid_gid();
+    e->dfd = dfd;
+    e->flags = flags;
+    e->op = op;
+
+    bpf_get_current_comm(e->comm, sizeof(e->comm));
+    read_user_path(e, pathname);
+    read_current_cmdline(e);
+
+    bpf_map_update_elem(&inflight, &key, e, BPF_ANY);
     return 0;
 }
 
@@ -116,7 +148,7 @@ static __always_inline int trace_lsm_delete(
 ) {
     unsigned long long key = bpf_get_current_pid_tgid();
     struct event *e = bpf_map_lookup_elem(&inflight, &key);
-    struct path target_path = {};
+    struct path target_path;
     long path_len;
 
     if (!e)
