@@ -4,6 +4,7 @@
 #define RM_MONITOR_COMM_LEN 16
 #define RM_MONITOR_PATH_LEN 256
 #define RM_MONITOR_RESOLVED_PATH_LEN 512
+#define RM_MONITOR_NAME_LEN 256
 #define RM_MONITOR_CMDLINE_LEN 512
 
 enum op_type {
@@ -36,6 +37,7 @@ struct event {
     char comm[RM_MONITOR_COMM_LEN];
     char path[RM_MONITOR_PATH_LEN];
     char resolved_path[RM_MONITOR_RESOLVED_PATH_LEN];
+    char target_name[RM_MONITOR_NAME_LEN];
     char cmdline[RM_MONITOR_CMDLINE_LEN];
 };
 

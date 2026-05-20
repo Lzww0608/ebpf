@@ -44,6 +44,7 @@ static __always_inline void reset_event(struct event *e) {
     e->comm[0] = '\0';
     e->path[0] = '\0';
     e->resolved_path[0] = '\0';
+    e->target_name[0] = '\0';
     e->cmdline[0] = '\0';
 }
 
@@ -148,7 +149,7 @@ static __always_inline int trace_lsm_delete(
 ) {
     unsigned long long key = bpf_get_current_pid_tgid();
     struct event *e = bpf_map_lookup_elem(&inflight, &key);
-    struct path target_path;
+    const unsigned char *name;
     long path_len;
 
     if (!e)
@@ -161,10 +162,11 @@ static __always_inline int trace_lsm_delete(
     if (!dir || !dentry)
         return ret;
 
-    target_path.mnt = BPF_CORE_READ(dir, mnt);
-    target_path.dentry = dentry;
+    name = BPF_CORE_READ(dentry, d_name.name);
+    if (name)
+        bpf_probe_read_kernel_str(e->target_name, sizeof(e->target_name), name);
 
-    path_len = bpf_d_path(&target_path, e->resolved_path, sizeof(e->resolved_path));
+    path_len = bpf_d_path((struct path *)dir, e->resolved_path, sizeof(e->resolved_path));
     if (path_len > 0)
         e->event_flags |= EVENT_F_PATH_RESOLVED;
 

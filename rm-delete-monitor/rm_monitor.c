@@ -125,7 +125,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
     const struct event *e = data;
     char proc_cmdline[PROC_CMDLINE_LEN];
     char cmdline[PROC_CMDLINE_LEN + 16];
-    const char *resolved_path;
+    char resolved_path[RM_MONITOR_RESOLVED_PATH_LEN + RM_MONITOR_NAME_LEN + 2];
     const char *err_text = "-";
     const char *cmdline_src;
     unsigned int cmdline_len;
@@ -164,8 +164,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
     if (cmdline_truncated)
         append_truncation_marker(cmdline, sizeof(cmdline));
 
-    resolved_path = (e->event_flags & EVENT_F_PATH_RESOLVED) ?
-        path_or_dash(e->resolved_path) : "-";
+    rm_monitor_format_resolved_path(resolved_path, sizeof(resolved_path), e);
 
     err_no = rm_monitor_errno(e->ret);
     if (err_no)
@@ -195,7 +194,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz) {
            (e->event_flags & EVENT_F_LSM_SEEN) ? "yes" : "no",
            e->lsm_ret,
            path_or_dash(e->path),
-           resolved_path,
+           path_or_dash(resolved_path),
            cmdline);
 
     return 0;
