@@ -28,6 +28,13 @@ struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 65536);
     __type(key, struct conn_key);
+    __type(value, struct packet_header);
+} packet_headers SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 65536);
+    __type(key, struct conn_key);
     __type(value, struct query_val);
 } pending_queries SEC(".maps");
 
@@ -105,58 +112,84 @@ static __always_inline int save_write_arg(int fd)
     return 0;
 }
 
-static __always_inline int handle_read_exit(long ret)
+static __always_inline unsigned int mysql_payload_len(const unsigned char hdr[4])
 {
-    unsigned long long pid_tgid = bpf_get_current_pid_tgid();
-    struct io_arg *arg = bpf_map_lookup_elem(&read_args, &pid_tgid);
-    unsigned int payload_len;
+    return (unsigned int)hdr[0] |
+           ((unsigned int)hdr[1] << 8) |
+           ((unsigned int)hdr[2] << 16);
+}
+
+static __always_inline int save_packet_header(struct conn_key *key,
+                                              struct io_arg *arg)
+{
+    struct packet_header ph = {};
+    unsigned char hdr[4] = {};
+
+    if (bpf_probe_read_user(hdr, sizeof(hdr), (void *)arg->buf) < 0)
+        return 0;
+
+    ph.payload_len = mysql_payload_len(hdr);
+    ph.seq_id = hdr[3];
+
+    if (ph.payload_len > 0)
+        bpf_map_update_elem(&packet_headers, key, &ph, BPF_ANY);
+
+    return 0;
+}
+
+static __always_inline int save_query_from_payload(struct conn_key *key,
+                                                   struct io_arg *arg,
+                                                   unsigned long long pid_tgid,
+                                                   unsigned int payload_len,
+                                                   unsigned int bytes_read,
+                                                   unsigned int payload_off)
+{
+    unsigned char prefix[3] = {};
+    unsigned int sql_off = 1;
     unsigned int available;
     unsigned int declared_sql_len;
     unsigned int copy_len;
-    unsigned char hdr[5] = {};
     struct query_val q = {};
-    struct conn_key key = {};
 
-    if (!arg)
+    if (payload_len < 1 || bytes_read < 1)
         return 0;
 
-    if (ret < 5)
-        goto cleanup;
+    if (bpf_probe_read_user(prefix, 1, (void *)(arg->buf + payload_off)) < 0)
+        return 0;
 
-    if (bpf_probe_read_user(hdr, sizeof(hdr), (void *)arg->buf) < 0)
-        goto cleanup;
+    if (prefix[0] != COM_QUERY)
+        return 0;
 
     /*
-     * MySQL packet:
-     *   3 bytes payload length
-     *   1 byte sequence id
-     *   payload[0] = command
+     * MySQL 8 clients may send COM_QUERY as:
+     *   command, parameter_count=0, parameter_set_count=1, SQL
+     * when CLIENT_QUERY_ATTRIBUTES is negotiated but no attributes are used.
      */
-    payload_len =
-        (unsigned int)hdr[0] |
-        ((unsigned int)hdr[1] << 8) |
-        ((unsigned int)hdr[2] << 16);
+    if (payload_len >= 3 && bytes_read >= 3) {
+        if (bpf_probe_read_user(prefix, sizeof(prefix),
+                                (void *)(arg->buf + payload_off)) < 0)
+            return 0;
 
-    if (payload_len < 1)
-        goto cleanup;
+        if (prefix[1] == 0 && prefix[2] == 1)
+            sql_off = 3;
+    }
 
-    if (hdr[3] != 0)
-        goto cleanup;
+    if (payload_len <= sql_off || bytes_read <= sql_off)
+        return 0;
 
-    if (hdr[4] != COM_QUERY)
-        goto cleanup;
-
-    available = (unsigned int)ret - 5;
-    declared_sql_len = payload_len - 1;
+    available = bytes_read - sql_off;
+    declared_sql_len = payload_len - sql_off;
     if (declared_sql_len < available)
         available = declared_sql_len;
 
     if (available == 0)
-        goto cleanup;
+        return 0;
 
     copy_len = available;
     if (copy_len > MAX_SQL_LEN - 1)
         copy_len = MAX_SQL_LEN - 1;
+    if (copy_len == 0 || copy_len > MAX_SQL_LEN - 1)
+        return 0;
 
     q.start_ns = bpf_ktime_get_ns();
     q.tgid = pid_tgid >> 32;
@@ -167,17 +200,64 @@ static __always_inline int handle_read_exit(long ret)
 
     bpf_get_current_comm(q.comm, sizeof(q.comm));
 
-    /*
-     * Keep helper size constant for verifier compatibility. Userspace copies
-     * sql_len bytes and appends its own terminator, so BPF does not need a
-     * variable-offset stack write for q.sql[copy_len].
-     */
-    if (bpf_probe_read_user(q.sql, MAX_SQL_LEN - 1, (void *)(arg->buf + 5)) < 0)
+    if (bpf_probe_read_user(q.sql, copy_len,
+                            (void *)(arg->buf + payload_off + sql_off)) < 0)
+        return 0;
+
+    bpf_map_update_elem(&pending_queries, key, &q, BPF_ANY);
+    return 0;
+}
+
+static __always_inline int handle_read_exit(long ret)
+{
+    unsigned long long pid_tgid = bpf_get_current_pid_tgid();
+    struct io_arg *arg = bpf_map_lookup_elem(&read_args, &pid_tgid);
+    struct packet_header *ph;
+    struct conn_key key = {};
+    unsigned int payload_len;
+    unsigned int bytes_read;
+    unsigned char hdr[4] = {};
+
+    if (!arg)
+        return 0;
+
+    if (ret <= 0)
         goto cleanup;
 
-    key.tgid = q.tgid;
-    key.fd = q.fd;
-    bpf_map_update_elem(&pending_queries, &key, &q, BPF_ANY);
+    key.tgid = pid_tgid >> 32;
+    key.fd = arg->fd;
+    bytes_read = (unsigned int)ret;
+
+    if (ret == 4) {
+        save_packet_header(&key, arg);
+        goto cleanup;
+    }
+
+    ph = bpf_map_lookup_elem(&packet_headers, &key);
+    if (ph) {
+        if (ph->seq_id == 0)
+            save_query_from_payload(&key, arg, pid_tgid,
+                                    ph->payload_len, bytes_read, 0);
+
+        bpf_map_delete_elem(&packet_headers, &key);
+        goto cleanup;
+    }
+
+    if (ret < 5)
+        goto cleanup;
+
+    if (bpf_probe_read_user(hdr, sizeof(hdr), (void *)arg->buf) < 0)
+        goto cleanup;
+
+    payload_len = mysql_payload_len(hdr);
+
+    if (payload_len < 1)
+        goto cleanup;
+
+    if (hdr[3] != 0)
+        goto cleanup;
+
+    save_query_from_payload(&key, arg, pid_tgid, payload_len, bytes_read - 4, 4);
 
 cleanup:
     bpf_map_delete_elem(&read_args, &pid_tgid);

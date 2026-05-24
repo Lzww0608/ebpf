@@ -5,6 +5,7 @@
 ## 原理
 
 - 监听 `mysqld`/`mariadbd` 的 `read`、`recvfrom`，解析 MySQL packet 头和 `COM_QUERY` payload。
+- 支持常见的两段式读取：一次 syscall 读取 4 字节 packet header，下一次 syscall 读取 payload。
 - 按 `tgid + fd` 保存 SQL 文本、开始时间、线程和用户信息。
 - 监听 `write`、`writev`、`sendto`、`sendmsg`，把第一次响应写出视为 SQL 完成到首包响应。
 - 当延迟超过阈值时，通过 ring buffer 输出慢 SQL 事件。
@@ -15,6 +16,7 @@
 
 - MySQL Classic Protocol
 - 明文 `COM_QUERY`
+- MySQL 8 客户端无 query attributes 时常见的 `command + 0 + 1 + SQL` payload
 - Unix socket / TCP socket，只要 syscall 层能看到明文 MySQL packet
 - 指定 PID 过滤，或默认按 `comm == "mysqld"` / `comm == "mariadbd"` 过滤
 
@@ -26,7 +28,7 @@
 - `recvmsg` / `readv` 请求解析
 - 多包 SQL 完整重组
 - 完整结果集发送结束时间
-- `CLIENT_QUERY_ATTRIBUTES` 下的可选 query attributes 结构
+- `CLIENT_QUERY_ATTRIBUTES` 下带真实 attributes 的完整结构
 
 ## 构建
 
@@ -103,6 +105,13 @@ sudo strace -fp $(pidof mysqld) \
 ```
 
 如果请求走 `recvmsg` 或 `readv`，当前版本抓不到 SQL 请求，需要扩展 iovec 解析。
+
+如果看到类似下面的两段式读取，这是当前版本支持的路径：
+
+```text
+recvfrom(fd, "\24\0\0\0", 4, ...) = 4
+recvfrom(fd, "\3\0\1SELECT SLEEP(0.2)", 20, ...) = 20
+```
 
 如果启用了 TLS，syscall 层看到的是 TLS record，不是 MySQL 明文包。更准确的生产级方案通常是 uprobe `SSL_read`/`SSL_write`，或 uprobe MySQL 内部 `dispatch_command` 路径。
 

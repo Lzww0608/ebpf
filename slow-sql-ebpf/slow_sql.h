@@ -14,6 +14,11 @@ struct conn_key {
     int fd;
 };
 
+struct packet_header {
+    unsigned int payload_len;
+    unsigned char seq_id;
+};
+
 struct query_val {
     unsigned long long start_ns;
 
