@@ -145,11 +145,14 @@ static __always_inline int save_query_from_payload(struct conn_key *key,
                                                    unsigned int payload_off)
 {
     unsigned char prefix[3] = {};
-    unsigned int sql_off = 1;
+    unsigned int data_off = payload_off + 1;
     unsigned int available;
     unsigned int declared_sql_len;
     unsigned int copy_len;
     struct query_val q = {};
+
+    bytes_read &= 0xffff;
+    payload_len &= 0xffffff;
 
     if (payload_len < 1 || bytes_read < 1)
         return 0;
@@ -171,14 +174,25 @@ static __always_inline int save_query_from_payload(struct conn_key *key,
             return 0;
 
         if (prefix[1] == 0 && prefix[2] == 1)
-            sql_off = 3;
+            data_off = payload_off + 3;
     }
 
-    if (payload_len <= sql_off || bytes_read <= sql_off)
-        return 0;
+    if (data_off == payload_off + 3) {
+        if (payload_len <= 3 || bytes_read <= 3)
+            return 0;
 
-    available = bytes_read - sql_off;
-    declared_sql_len = payload_len - sql_off;
+        available = bytes_read - 3;
+        declared_sql_len = payload_len - 3;
+    } else {
+        if (payload_len <= 1 || bytes_read <= 1)
+            return 0;
+
+        available = bytes_read - 1;
+        declared_sql_len = payload_len - 1;
+    }
+
+    available &= 0xffff;
+    declared_sql_len &= 0xffffff;
     if (declared_sql_len < available)
         available = declared_sql_len;
 
@@ -188,6 +202,7 @@ static __always_inline int save_query_from_payload(struct conn_key *key,
     copy_len = available;
     if (copy_len > MAX_SQL_LEN - 1)
         copy_len = MAX_SQL_LEN - 1;
+    copy_len &= 0xff;
     if (copy_len == 0 || copy_len > MAX_SQL_LEN - 1)
         return 0;
 
@@ -200,8 +215,12 @@ static __always_inline int save_query_from_payload(struct conn_key *key,
 
     bpf_get_current_comm(q.comm, sizeof(q.comm));
 
-    if (bpf_probe_read_user(q.sql, copy_len,
-                            (void *)(arg->buf + payload_off + sql_off)) < 0)
+    /*
+     * Use a constant helper size. The real SQL length is carried in sql_len,
+     * and userspace only prints that many bytes.
+     */
+    if (bpf_probe_read_user(q.sql, MAX_SQL_LEN - 1,
+                            (void *)(arg->buf + data_off)) < 0)
         return 0;
 
     bpf_map_update_elem(&pending_queries, key, &q, BPF_ANY);
