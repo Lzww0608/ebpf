@@ -167,11 +167,13 @@ static __always_inline int handle_read_exit(long ret)
 
     bpf_get_current_comm(q.comm, sizeof(q.comm));
 
-    /* Keep helper size constant for verifier compatibility. */
+    /*
+     * Keep helper size constant for verifier compatibility. Userspace copies
+     * sql_len bytes and appends its own terminator, so BPF does not need a
+     * variable-offset stack write for q.sql[copy_len].
+     */
     if (bpf_probe_read_user(q.sql, MAX_SQL_LEN - 1, (void *)(arg->buf + 5)) < 0)
         goto cleanup;
-
-    q.sql[copy_len] = '\0';
 
     key.tgid = q.tgid;
     key.fd = q.fd;
