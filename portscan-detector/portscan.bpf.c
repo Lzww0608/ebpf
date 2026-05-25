@@ -104,7 +104,7 @@ static __always_inline void submit_alert(struct xdp_md *ctx,
                                          unsigned int src_ip,
                                          unsigned short dport,
                                          struct scan_state *state,
-                                         unsigned int count)
+                                         unsigned long long count)
 {
     struct alert_event *e;
 
@@ -117,7 +117,7 @@ static __always_inline void submit_alert(struct xdp_md *ctx,
     e->window_ns = window_ns;
     e->ifindex = ctx->ingress_ifindex;
     e->src_ip = src_ip;
-    e->distinct_ports = count;
+    e->distinct_ports = (unsigned int)count;
     e->threshold_ports = threshold_ports;
     e->last_dport = dport;
     e->pad = 0;
@@ -134,7 +134,7 @@ int xdp_portscan_detector(struct xdp_md *ctx)
     struct scan_state *state;
     struct port_key pkey = {};
     unsigned char one = 1;
-    unsigned int new_count;
+    unsigned long long new_count;
 
     if (!parse_ipv4_tcp_syn(ctx, &src_ip, &dport))
         return XDP_PASS;
@@ -170,7 +170,7 @@ int xdp_portscan_detector(struct xdp_md *ctx)
 
     new_count = __sync_fetch_and_add(&state->distinct_ports, 1) + 1;
     if (new_count >= threshold_ports) {
-        unsigned int old_alerted;
+        unsigned long long old_alerted;
 
         old_alerted = __sync_val_compare_and_swap(&state->alerted, 0, 1);
         if (old_alerted == 0)
