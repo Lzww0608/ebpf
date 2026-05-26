@@ -4,10 +4,10 @@
 struct scan_state {
     unsigned long long window_start_ns;
     unsigned long long last_seen_ns;
+
     unsigned long long distinct_ports;
     unsigned long long alerted;
 };
-
 struct port_key {
     unsigned int src_ip;
     unsigned short dport;
