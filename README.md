@@ -8,7 +8,7 @@
 
 - [x] 1. 开发一个慢 SQL 监控工具：解析 MySQL read/recv 中的 COM_QUERY，并用 write/send 首包响应计算超过 100ms 的 SQL
 - [x] 2. 开发一个端口扫描检测工具：监控短时间内访问大量端口的 IP 地址
-- [ ] 3. 开发一个容器资源监控工具：基于 cgroup eBPF 统计每个容器的 CPU、内存、IO 使用情况
+- [x] 3. 开发一个容器资源监控工具：基于 cgroup eBPF 统计每个容器的 CPU、内存、IO 使用情况
 
 ## 高级练习
 
