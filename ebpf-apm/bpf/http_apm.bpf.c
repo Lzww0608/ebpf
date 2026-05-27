@@ -116,18 +116,13 @@ static __always_inline void copy_method_and_path(char *data, int mlen, struct re
         if (i < mlen)
             req->method[i] = data[i];
     }
+}
 
-    int start = mlen + 1;
-
+static __always_inline void copy_path_from_4(char *data, struct req_ctx_t *req)
+{
 #pragma unroll
     for (int i = 0; i < MAX_PATH - 1; i++) {
-        int offset = start + i;
-        char c;
-
-        if (offset >= MAX_BUF)
-            break;
-
-        c = data[offset];
+        char c = data[4 + i];
         if (c == ' ' || c == '?' || c == '\r' || c == '\n' || c == 0) {
             req->path[i] = 0;
             break;
@@ -137,6 +132,66 @@ static __always_inline void copy_method_and_path(char *data, int mlen, struct re
     }
 
     req->path[MAX_PATH - 1] = 0;
+}
+
+static __always_inline void copy_path_from_5(char *data, struct req_ctx_t *req)
+{
+#pragma unroll
+    for (int i = 0; i < MAX_PATH - 1; i++) {
+        char c = data[5 + i];
+        if (c == ' ' || c == '?' || c == '\r' || c == '\n' || c == 0) {
+            req->path[i] = 0;
+            break;
+        }
+
+        req->path[i] = c;
+    }
+
+    req->path[MAX_PATH - 1] = 0;
+}
+
+static __always_inline void copy_path_from_6(char *data, struct req_ctx_t *req)
+{
+#pragma unroll
+    for (int i = 0; i < MAX_PATH - 1; i++) {
+        char c = data[6 + i];
+        if (c == ' ' || c == '?' || c == '\r' || c == '\n' || c == 0) {
+            req->path[i] = 0;
+            break;
+        }
+
+        req->path[i] = c;
+    }
+
+    req->path[MAX_PATH - 1] = 0;
+}
+
+static __always_inline void copy_path_from_7(char *data, struct req_ctx_t *req)
+{
+#pragma unroll
+    for (int i = 0; i < MAX_PATH - 1; i++) {
+        char c = data[7 + i];
+        if (c == ' ' || c == '?' || c == '\r' || c == '\n' || c == 0) {
+            req->path[i] = 0;
+            break;
+        }
+
+        req->path[i] = c;
+    }
+
+    req->path[MAX_PATH - 1] = 0;
+}
+
+static __always_inline void copy_path(char *data, int mlen, struct req_ctx_t *req)
+{
+    if (mlen == 3)
+        copy_path_from_4(data, req);
+    else if (mlen == 4)
+        copy_path_from_5(data, req);
+    else if (mlen == 5)
+        copy_path_from_6(data, req);
+    else if (mlen == 6)
+        copy_path_from_7(data, req);
 }
 
 static __always_inline int parse_status(char *d)
@@ -193,14 +248,13 @@ int handle_exit_read(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    char data[MAX_BUF] = {};
-    __u32 size = ret < MAX_BUF ? ret : MAX_BUF;
-    if (size < 12) {
+    if (ret < 12 || args->count < MAX_BUF) {
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
 
-    if (bpf_probe_read_user(data, size, (const void *)args->buf) != 0) {
+    char data[MAX_BUF] = {};
+    if (bpf_probe_read_user(data, MAX_BUF, (const void *)args->buf) != 0) {
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
@@ -215,6 +269,7 @@ int handle_exit_read(struct trace_event_raw_sys_exit *ctx)
 
         req.start_ns = bpf_ktime_get_ns();
         copy_method_and_path(data, mlen, &req);
+        copy_path(data, mlen, &req);
 
         bpf_map_update_elem(&inflight, &key, &req, BPF_ANY);
     }
