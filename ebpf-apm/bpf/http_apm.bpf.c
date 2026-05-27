@@ -29,7 +29,7 @@ struct req_ctx_t {
     char path[MAX_PATH];
 };
 
-typedef struct event_t {
+struct event {
     __u32 tgid;
     __u32 pid;
     __s32 fd;
@@ -38,7 +38,14 @@ typedef struct event_t {
     char comm[16];
     char method[MAX_METHOD];
     char path[MAX_PATH];
-} event_t;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct event);
+} event_type_anchor SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -248,7 +255,7 @@ int handle_enter_write(struct trace_event_raw_sys_enter *ctx)
     if (!req)
         return 0;
 
-    event_t *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+    struct event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
     if (!event)
         return 0;
 

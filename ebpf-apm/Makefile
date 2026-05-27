@@ -12,7 +12,7 @@ bpf/vmlinux.h:
 	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
 generate: bpf/vmlinux.h
-	cd cmd/apm && $(BPF2GO) -go-package main -target bpfel -type event_t bpf ../../bpf/http_apm.bpf.c -- -I../../bpf -D__TARGET_ARCH_$(ARCH)
+	cd cmd/apm && $(BPF2GO) -go-package main -target bpfel -type event bpf ../../bpf/http_apm.bpf.c -- -I../../bpf -D__TARGET_ARCH_$(ARCH)
 
 build: generate
 	go build -o $(BINARY) ./cmd/apm

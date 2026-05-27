@@ -25,7 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -go-package main -target bpfel -type event_t bpf ../../bpf/http_apm.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -go-package main -target bpfel -type event bpf ../../bpf/http_apm.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
 
 var (
 	requestTotal = prometheus.NewCounterVec(
@@ -173,7 +173,7 @@ func consumeEvents(reader *ringbuf.Reader) {
 			continue
 		}
 
-		var event bpfEventT
+		var event bpfEvent
 		if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
 			log.Printf("decode event: %v", err)
 			continue
