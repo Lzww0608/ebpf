@@ -1,11 +1,22 @@
 package bpfstring
 
-import "bytes"
+type charByte interface {
+	~byte | ~int8
+}
 
-func CString(value []byte) string {
-	n := bytes.IndexByte(value, 0)
-	if n == -1 {
-		n = len(value)
+func CString[T charByte](value []T) string {
+	n := len(value)
+	for i, b := range value {
+		if b == 0 {
+			n = i
+			break
+		}
 	}
-	return string(value[:n])
+
+	out := make([]byte, n)
+	for i := 0; i < n; i++ {
+		out[i] = byte(value[i])
+	}
+
+	return string(out)
 }

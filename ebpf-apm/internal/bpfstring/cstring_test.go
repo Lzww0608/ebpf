@@ -17,3 +17,11 @@ func TestCStringUsesWholeSliceWithoutNUL(t *testing.T) {
 		t.Fatalf("CString(%v) = %q, want %q", input, got, "POST")
 	}
 }
+
+func TestCStringAcceptsGeneratedInt8CharArrays(t *testing.T) {
+	input := []int8{'G', 'E', 'T', 0, 'X'}
+
+	if got := CString(input); got != "GET" {
+		t.Fatalf("CString(%v) = %q, want %q", input, got, "GET")
+	}
+}
