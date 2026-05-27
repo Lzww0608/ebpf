@@ -1,0 +1,10 @@
+/.gocache/
+/.gomodcache/
+/.gopath/
+/ebpf-apm
+/demo-http
+/cmd/apm/bpf_bpfel.go
+/cmd/apm/bpf_bpfeb.go
+/cmd/apm/bpf_bpfel.o
+/cmd/apm/bpf_bpfeb.o
+/bpf/vmlinux.h
