@@ -14,7 +14,7 @@ const volatile __u32 target_tgid = 0;
 
 struct io_args_t {
     __s32 fd;
-    const char *buf;
+    __u64 buf;
     __u64 count;
 };
 
@@ -167,7 +167,7 @@ int handle_enter_read(struct trace_event_raw_sys_enter *ctx)
     struct io_args_t args = {};
 
     args.fd = (__s32)ctx->args[0];
-    args.buf = (const char *)ctx->args[1];
+    args.buf = (__u64)ctx->args[1];
     args.count = (__u64)ctx->args[2];
 
     bpf_map_update_elem(&active_reads, &id, &args, BPF_ANY);
@@ -200,7 +200,7 @@ int handle_exit_read(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    if (bpf_probe_read_user(data, size, args->buf) != 0) {
+    if (bpf_probe_read_user(data, size, (const void *)args->buf) != 0) {
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
