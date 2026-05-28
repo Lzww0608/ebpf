@@ -1,0 +1,50 @@
+sensitive_paths:
+  - pattern: "^/etc/shadow$"
+    severity: critical
+    score: 95
+  - pattern: "^/etc/sudoers$"
+    severity: critical
+    score: 95
+  - pattern: "^/etc/passwd$"
+    severity: medium
+    score: 55
+    write_severity: critical
+    write_score: 90
+  - pattern: "^/root/\\.ssh"
+    severity: critical
+    score: 90
+  - pattern: "^/home/[^/]+/\\.ssh"
+    severity: high
+    score: 80
+  - pattern: "^/proc/kcore$"
+    severity: critical
+    score: 95
+  - pattern: "^/proc/sys/kernel"
+    severity: high
+    score: 75
+
+suspicious_syscalls:
+  ptrace:
+    severity: high
+    score: 80
+    allow_comm: ["gdb", "strace", "lldb"]
+  bpf:
+    severity: high
+    score: 85
+    allow_comm: ["mini-ids", "bpftool", "bpftrace", "bcc"]
+  perf_event_open:
+    severity: medium
+    score: 65
+    allow_comm: ["perf", "bcc", "bpftrace"]
+  setns:
+    severity: high
+    score: 80
+    allow_comm: ["containerd", "runc", "dockerd", "crio"]
+
+privilege_changes:
+  non_root_to_root:
+    severity: critical
+    score: 98
+  capset:
+    severity: critical
+    score: 90
